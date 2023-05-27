@@ -1,126 +1,90 @@
-// Signal K application template file.
-//
-// This application demonstrates core SensESP concepts in a very
-// concise manner. You can build and upload the application as is
-// and observe the value changes on the serial port monitor.
-//
-// You can use this source file as a basis for your own projects.
-// Remove the parts that are not relevant to you, and add your own code
-// for external hardware libraries.
+
+#include <Arduino.h>
 
 #include "sensesp/sensors/analog_input.h"
-#include "sensesp/sensors/digital_input.h"
-#include "sensesp/sensors/sensor.h"
 #include "sensesp/signalk/signalk_output.h"
-#include "sensesp/system/lambda_consumer.h"
+#include "sensesp/transforms/linear.h"
+#include "sensesp_app.h"
 #include "sensesp_app_builder.h"
+
+#include <NimBLEDevice.h>
+
 
 using namespace sensesp;
 
+NimBLEScan* pBLEScan;
+
+class MyAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
+    void onResult(NimBLEAdvertisedDevice* advertisedDevice) {
+      debugI("Advertised Device: %s \n", advertisedDevice->toString().c_str());
+    }
+};
+
+// SensESP builds upon the ReactESP framework. Every ReactESP application
+// must instantiate the "app" object.
 reactesp::ReactESP app;
 
 // The setup function performs one-time application initialization.
 void setup() {
+// Some initialization boilerplate when in debug mode...
 #ifndef SERIAL_DEBUG_DISABLED
   SetupSerialDebug(115200);
 #endif
 
-  // Construct the global SensESPApp() object
+
+  debugI("scanner starting...\n");
+
+  // Create the global SensESPApp() object.
   SensESPAppBuilder builder;
-  sensesp_app = (&builder)
-                    // Set a custom hostname for the app.
-                    ->set_hostname("my-sensesp-project")
-                    // Optionally, hard-code the WiFi and Signal K server
-                    // settings. This is normally not needed.
-                    //->set_wifi("My WiFi SSID", "my_wifi_password")
-                    //->set_sk_server("192.168.10.3", 80)
+  sensesp_app = builder.set_hostname("SensESP-ruuvi-bridge")
+                    ->enable_ota("thisisfine")
                     ->get_app();
 
-  // GPIO number to use for the analog input
-  const uint8_t kAnalogInputPin = 36;
-  // Define how often (in milliseconds) new samples are acquired
-  const unsigned int kAnalogInputReadInterval = 500;
-  // Define the produced value at the maximum input voltage (3.3V).
-  // A value of 3.3 gives output equal to the input voltage.
-  const float kAnalogInputScale = 3.3;
+/*
+ *  CONFIG_BTDM_SCAN_DUPL_TYPE_DATA_DEVICE (2)
+ *  Filter by address and data, advertisements from the same address will be reported only once,
+ *  except if the data in the advertisement has changed, then it will be reported again.
+*/
+  NimBLEDevice::setScanFilterMode(CONFIG_BTDM_SCAN_DUPL_TYPE_DEVICE);
 
-  // Create a new Analog Input Sensor that reads an analog input pin
-  // periodically.
-  auto* analog_input = new AnalogInput(
-      kAnalogInputPin, kAnalogInputReadInterval, "", kAnalogInputScale);
+/** *Optional* Sets the scan filter cache size in the BLE controller.
+ *  When the number of duplicate advertisements seen by the controller
+ *  reaches this value it will clear the cache and start reporting previously
+ *  seen devices. The larger this number, the longer time between repeated
+ *  device reports. Range 10 - 1000. (default 20)
+ *
+ *  Can only be used BEFORE calling NimBLEDevice::init.
+ */
+  NimBLEDevice::setScanDuplicateCacheSize(200);
 
-  // Add an observer that prints out the current value of the analog input
-  // every time it changes.
-  analog_input->attach([analog_input]() {
-    debugD("Analog input value: %f", analog_input->get());
-  });
+  NimBLEDevice::init("");
 
-  // Set GPIO pin 15 to output and toggle it every 650 ms
+  pBLEScan = NimBLEDevice::getScan(); //create new scan
+  // Set the callback for when devices are discovered, no duplicates.
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), false);
+  pBLEScan->setActiveScan(true); // Set active scanning, this will get more data from the advertiser.
+  pBLEScan->setInterval(97); // How often the scan occurs / switches channels; in milliseconds,
+  pBLEScan->setWindow(37);  // How long to scan during the interval; in milliseconds.
+  pBLEScan->setMaxResults(0); // do not store the scan results, use callback only.
 
-  const uint8_t kDigitalOutputPin = 15;
-  const unsigned int kDigitalOutputInterval = 650;
-  pinMode(kDigitalOutputPin, OUTPUT);
-  app.onRepeat(kDigitalOutputInterval, [kDigitalOutputPin]() {
-    digitalWrite(kDigitalOutputPin, !digitalRead(kDigitalOutputPin));
-  });
 
-  // Read GPIO 14 every time it changes
-
-  const uint8_t kDigitalInput1Pin = 14;
-  auto* digital_input1 =
-      new DigitalInputChange(kDigitalInput1Pin, INPUT_PULLUP, CHANGE);
-
-  // Connect the digital input to a lambda consumer that prints out the
-  // value every time it changes.
-
-  // Test this yourself by connecting pin 15 to pin 14 with a jumper wire and
-  // see if the value changes!
-
-  digital_input1->connect_to(new LambdaConsumer<bool>(
-      [](bool input) { debugD("Digital input value changed: %d", input); }));
-
-  // Create another digital input, this time with RepeatSensor. This approach
-  // can be used to connect external sensor library to SensESP!
-
-  const uint8_t kDigitalInput2Pin = 13;
-  const unsigned int kDigitalInput2Interval = 1000;
-
-  // Configure the pin. Replace this with your custom library initialization
-  // code!
-  pinMode(kDigitalInput2Pin, INPUT_PULLUP);
-
-  // Define a new RepeatSensor that reads the pin every 100 ms.
-  // Replace the lambda function internals with the input routine of your custom
-  // library.
-
-  // Again, test this yourself by connecting pin 15 to pin 13 with a jumper
-  // wire and see if the value changes!
-
-  auto* digital_input2 = new RepeatSensor<bool>(
-      kDigitalInput2Interval,
-      [kDigitalInput2Pin]() { return digitalRead(kDigitalInput2Pin); });
-
-  // Connect the analog input to Signal K output. This will publish the
-  // analog input value to the Signal K server every time it changes.
-  analog_input->connect_to(new SKOutputFloat(
-      "sensors.analog_input.voltage",         // Signal K path
-      "/sensors/analog_input/voltage",        // configuration path, used in the
-                                              // web UI and for storing the
-                                              // configuration
-      new SKMetadata("V",                     // Define output units
-                     "Analog input voltage")  // Value description
-      ));
-
-  // Connect digital input 2 to Signal K output.
-  digital_input2->connect_to(new SKOutputBool(
-      "sensors.digital_input2.value",          // Signal K path
-      "/sensors/digital_input2/value",         // configuration path
-      new SKMetadata("",                       // No units for boolean values
-                     "Digital input 2 value")  // Value description
-      ));
-
-  // Start networking, SK server connections and other SensESP internals
+  // Start the SensESP application running
   sensesp_app->start();
+  pBLEScan->start(0, nullptr, false);
+  debugI("scanner started\n");
 }
 
-void loop() { app.tick(); }
+// The loop function is called in an endless loop during program execution.
+// It simply calls `app.tick()` which will then execute all reactions as needed.
+void loop() { 
+
+/*
+  // If an error occurs that stops the scan, it will be restarted here.
+  if(pBLEScan->isScanning() == false) {
+      // Start scan with: duration = 0 seconds(forever), no scan end callback, not a continuation of a previous scan.
+      pBLEScan->start(0, nullptr, false);
+  }
+*/
+
+  app.tick(); 
+}
