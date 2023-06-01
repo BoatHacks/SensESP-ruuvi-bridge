@@ -182,9 +182,9 @@ void constructSKOutput(const char* macaddr, const int idx) {
   temperatureOut[idx] = new SKOutputFloat("environment." + (String)macaddr + ".temperature",
                                             "/Paths/" + (String)macaddr + "/Temperature",
                                             "K");
-  humidityOut[idx] = new SKOutputFloat("environment." + (String)macaddr + ".humidity",
+  humidityOut[idx] = new SKOutputFloat("environment." + (String)macaddr + ".relativeHumidity",
                                             "/Paths/" + (String)macaddr + "/Humidity",
-                                            "Ratio");
+                                            "ratio");
   pressureOut[idx] = new SKOutputFloat("environment." + (String)macaddr + ".pressure",
                                             "/Paths/" + (String)macaddr + "/Pressure",
                                             "Pa");
